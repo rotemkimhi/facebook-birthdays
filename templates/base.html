@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}FB Birthdays{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app-container">
+    <div class="card">
+      <main>
+        {% block content %}
+        <!-- default content could go here -->
+        {% endblock %}
+      </main>
+    </div>
+  </div>
+</body>
+</html>

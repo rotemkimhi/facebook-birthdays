@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Import / Delete{% endblock %}
+{% block content %}
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+  <form method="post" enctype="multipart/form-data">
+    <div class="mb-3">
+      <div class="form-check form-check-inline">
+        <input
+          class="form-check-input"
+          type="radio"
+          name="action"
+          id="add"
+          value="add"
+          checked>
+        <label class="form-check-label" for="add">
+          Add Birthdays
+        </label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input
+          class="form-check-input"
+          type="radio"
+          name="action"
+          id="delete"
+          value="delete">
+        <label class="form-check-label" for="delete">
+          Delete Calendar
+        </label>
+      </div>
+    </div>    
+    <div id="ics-input" class="mb-3">
+      <label>Facebook .ics file</label>
+      <input type="file" name="ics_file" class="form-control">
+    </div>
+    <div id="reminder-input" class="mb-3">
+      <label>Reminder (hours before)</label>
+      <input type="range" name="reminder" min="0" max="24" value="12"
+             oninput="this.nextElementSibling.innerText=this.value">
+      <span>12</span> hours
+    </div>
+    <button type="submit" class="btn btn-primary">Proceed</button>
+  </form>
+  <script>
+    const add=document.getElementById('add'),
+          del=document.getElementById('delete'),
+          ics=document.getElementById('ics-input'),
+          rem=document.getElementById('reminder-input');
+    function toggle(){
+      ics.style.display = del.checked?'none':'block';
+      rem.style.display = del.checked?'none':'block';
+    }
+    add.onchange=del.onchange=toggle; toggle();
+  </script>
+{% endblock %}
