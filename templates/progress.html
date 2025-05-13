@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Importing Birthdays…{% endblock %}
+{% block content %}
+  <div class="container py-5">
+    <div class="card p-4 mx-auto" style="max-width: 600px;">
+      <h2 class="text-center mb-4">Adding Birthdays…</h2>
+
+      <progress id="bar" class="form-range" max="100" value="0"></progress>
+      <div id="message" class="text-center mt-2">0%</div>
+
+      <div class="divider my-4"></div>
+      <button
+        id="back"
+        type="button"
+        class="btn btn-secondary w-100"
+        style="display:none">
+        Back to Home
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const jobId = "{{ job_id }}",
+          bar   = document.getElementById("bar"),
+          msg   = document.getElementById("message"),
+          back  = document.getElementById("back");
+
+    async function poll() {
+      const res  = await fetch(`/progress?job_id=${jobId}`);
+      const data = await res.json();
+      bar.value = data.pct;
+      // now only shows counts + percent
+      msg.innerText = data.message + ` (${data.pct}%)`;
+      if (data.pct < 100) {
+        setTimeout(poll, 500);
+      } else {
+        back.style.display = "block";
+        back.onclick = () => {
+          window.location.href = "{{ url_for('index') }}";
+        };
+      }
+    }
+    document.addEventListener("DOMContentLoaded", () => {
+      // show the initial PROGRESS[job_id].message
+      poll();
+    });
+  </script>
+{% endblock %}

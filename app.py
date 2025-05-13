@@ -1,13 +1,16 @@
 import os
+import threading
+import uuid
 from flask import (
     Flask, request, session, redirect, url_for,
-    render_template, Response, stream_with_context
+    render_template, Response, jsonify, stream_with_context
 )
 from flask_session import Session
 from werkzeug.utils import secure_filename
 import google_auth_oauthlib.flow
+from werkzeug.middleware.proxy_fix import ProxyFix
 
-from facebook_bdays.calendar_service import get_calendar_service
+from facebook_bdays.calendar_service import delete_calendar_if_exists, get_calendar_service
 from facebook_bdays.ics_parser       import fetch_fb_birthdays_from_ics
 from facebook_bdays.birthdays        import insert_birthdays_generator
 
@@ -22,54 +25,63 @@ app.config.update(
     SESSION_PERMANENT=False,
     UPLOAD_FOLDER='./.uploads'
 )
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
 Session(app)
+PROGRESS = {}
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 CLIENT_SECRETS_FILE = 'credentials.json'
 CALENDAR_NAME = "facebook Birthdays"
 
+def do_import(job_id, service, birthdays, reminder, calendar_name):
+    total = len(birthdays)
+    done  = 0
+
+    # Delete old calendar if present
+    PROGRESS[job_id] = {"pct": 0, "message": "Checking for existing calendar…"}
+    deleted = delete_calendar_if_exists(service, calendar_name)
+    if deleted:
+        PROGRESS[job_id] = {"pct": 0, "message": "Deleted old calendar, creating new one…"}
+    else:
+        PROGRESS[job_id] = {"pct": 0, "message": "No existing calendar, creating new one…"}
+
+    #  Now proceed with your insert generator (which will create a fresh calendar)
+    for name, status, pct in insert_birthdays_generator(
+            service, birthdays, reminder, calendar_name):
+        PROGRESS[job_id] = {
+            "pct": pct,
+            "message": f"Added ({pct * total // 100}/{total})"
+        }
+        done += 1
+
+    PROGRESS[job_id] = {
+        "pct": 100,
+        "message": f"Done! {done}/{total} birthdays added."
+    }
+
+@app.before_request
+def enforce_https_in_redirect():
+    if request.headers.get("X-Forwarded-Proto", "http") == "https":
+        request.environ['wsgi.url_scheme'] = 'https'
 
 @app.route('/', methods=['GET','POST'])
 def index():
-    error    = None
+    error = None
+    # ─── NEW: if we already have OAuth credentials, short-circuit on GET
     if request.method == 'POST':
-        action = request.form['action']
+        f = request.files.get('ics_file')
+        if not f or not f.filename.lower().endswith('.ics'):
+            error = "Please upload a valid .ics file."
+            return render_template('index.html', error=error)
 
-        # Only clear the old upload info—do NOT clear session['credentials']
-        session.pop('ics_path', None)
-        session.pop('reminder', None)
-        session['action'] = action
-        # only block “Add” if we **can** check for the calendar
-        if action == 'add' and 'credentials' in session:
-            svc   = get_calendar_service()
-            items = svc.calendarList().list().execute().get('items', [])
-            if any(c['summary'] == CALENDAR_NAME for c in items):
-                error = f'You already have a calendar named "{CALENDAR_NAME}". Delete it first.'
-                return render_template('index.html', error=error)
-            
-        elif action == 'delete' and 'credentials' in session:
-            svc   = get_calendar_service()
-            items = svc.calendarList().list().execute().get('items', [])
-            exists = any(c['summary'] == CALENDAR_NAME for c in items)
-            if not exists:
-                error = f'No "{CALENDAR_NAME}" calendar to delete.'
-                return render_template('index.html', error=error)
-        
-        if action == 'add':
-            f = request.files.get('ics_file')
-            if not f or not f.filename:
-                error = "Please upload a .ics file to proceed."
-            elif not f.filename.lower().endswith('.ics'):
-                error = "Only files ending in .ics are allowed."
-            if error:
-                return render_template('index.html', error=error)
+        fn = secure_filename(f.filename)
+        path = os.path.join(app.config['UPLOAD_FOLDER'], fn)
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        f.save(path)
 
-            fn = secure_filename(f.filename)
-            path = os.path.join(app.config['UPLOAD_FOLDER'], fn)
-            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-            f.save(path)
-            session['ics_path'] = path
-            session['reminder']  = int(request.form['reminder'])
+        session['ics_path']  = path
+        session['reminder']  = int(request.form['reminder'])
+
         return redirect(url_for('oauth2callback'))
 
     return render_template('index.html', error=error)
@@ -107,43 +119,33 @@ def oauth2callback():
 
 @app.route('/process')
 def process():
-    service = get_calendar_service()
-    action  = session['action']
+    service    = get_calendar_service()
+    birthdays  = fetch_fb_birthdays_from_ics(session['ics_path'])
+    reminder   = session['reminder']
+    calendar_nm = CALENDAR_NAME
 
-    if action == 'add':
-        
-        friends  = fetch_fb_birthdays_from_ics(session['ics_path'])
-        reminder = session['reminder']
-        total    = len(friends)
+    # create a job and start it
+    job_id = str(uuid.uuid4())
+    session['job_id'] = job_id
 
-        def gen_add():
-            # render initial template
-            yield render_template('process.html', action="Adding")
-            count = 0
-            for name, status in insert_birthdays_generator(
-                    service, friends, reminder, CALENDAR_NAME):
-                count += 1
-                pct = int(count / total * 100)
-                yield f"<script>update({pct});</script>\n"
-            session['calendar_created'] = True
-            yield f"<script>finished('{count}/{total} added')</script>"
-            
-        return Response(stream_with_context(gen_add()),
-                        content_type='text/html; charset=utf-8')
+    thread = threading.Thread(
+        target=do_import,
+        args=(job_id, service, birthdays, reminder, calendar_nm),
+        daemon=True
+    )
+    thread.start()
 
-    else:  # delete
-        def gen_del():
-            yield render_template('process.html', action="Deleting")
-            # find the calendar
-            items = service.calendarList().list().execute().get('items', [])
-            session.pop('calendar_created', None)
-            cal = next((c for c in items if c['summary']==CALENDAR_NAME), None)
-            service.calendars().delete(calendarId=cal['id']).execute()
-            yield "<script>update(100);</script>\n"
-            yield "<script>finished('Calendar deleted')</script>"
+    return render_template('progress.html', job_id=job_id)
 
-        return Response(stream_with_context(gen_del()),
-                        content_type='text/html; charset=utf-8')
+@app.route('/progress')
+def progress():
+    job_id = request.args.get('job_id')
+    data   = PROGRESS.get(job_id, {"pct": 0, "message": "No job"})
+    return jsonify(data)
+@app.route('/debug')
+def debug():
+    return url_for('oauth2callback', _external=True)
+
 
 
 if __name__ == '__main__':
