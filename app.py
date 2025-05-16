@@ -67,7 +67,6 @@ def enforce_https_in_redirect():
 @app.route('/', methods=['GET','POST'])
 def index():
     error = None
-    # ─── NEW: if we already have OAuth credentials, short-circuit on GET
     if request.method == 'POST':
         f = request.files.get('ics_file')
         if not f or not f.filename.lower().endswith('.ics'):
@@ -142,9 +141,18 @@ def progress():
     job_id = request.args.get('job_id')
     data   = PROGRESS.get(job_id, {"pct": 0, "message": "No job"})
     return jsonify(data)
-@app.route('/debug')
-def debug():
-    return url_for('oauth2callback', _external=True)
+
+@app.route('/legal/')
+def homepage():
+    return render_template('legal/index.html')
+
+@app.route('/legal/privacy.html')
+def privacy():
+    return render_template('legal/privacy.html')
+
+@app.route('/legal/terms.html')
+def terms():
+    return render_template('legal/terms.html')
 
 
 
