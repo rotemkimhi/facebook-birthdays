@@ -3,7 +3,7 @@ import threading
 import uuid
 from flask import (
     Flask, request, session, redirect, url_for,
-    render_template, Response, jsonify, stream_with_context
+    render_template, Response, jsonify, stream_with_context, send_from_directory
 )
 from flask_session import Session
 from werkzeug.utils import secure_filename
@@ -153,6 +153,10 @@ def privacy():
 @app.route('/legal/terms.html')
 def terms():
     return render_template('legal/terms.html')
+
+@app.route('/googleb4f7f564d8aa453f.html')
+def serve_verification_file():
+    return send_from_directory('static', 'googleb4f7f564d8aa453f.html')
 
 
 
